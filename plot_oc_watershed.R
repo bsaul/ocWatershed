@@ -28,6 +28,8 @@ fgdb <- file.path("data", "nc_phwa_package_170518",
                   "NC_PHWA_Geodatabase_170518.gdb")
 
 county_boundary <- read_sp_data("data/county", "CountyLine")
+streams <- read_sp_data("data/streams", "Streams")
+city <- read_sp_data("data/city", "city")
 meta <- sf::st_read(dsn = fgdb, layer = "PHWA_Metadata")
 indices <- sf::st_read(dsn = fgdb, layer = "PHWA_Indices")
 hucs <- read_sp_data(.dsn = fgdb, 
@@ -42,7 +44,7 @@ ocintersect <- sf::st_intersection(ochucs, county_boundary) %>%
   )
 
 
-
+p <-
 ochucs %>%
   mutate(
     geometry = st_cast(Shape, "POLYGON")
@@ -54,20 +56,33 @@ ochucs %>%
     aes(fill = PHWA_VULN_NDX_ER_2016),
     size = .1
   ) + 
+  geom_sf(
+    data = city,
+    color = "black",
+    size  = 0.25,
+    fill = NA
+  ) + 
+  geom_sf(
+    data = filter(streams, NAMED == "yes"),
+    size = 0.2,
+    color = "blue"
+  ) + 
   geom_sf_text(aes(label = HUC_12), size = 2) +
   scale_fill_gradient(low = "grey90", high = "grey10") +
   labs(
     title = meta %>%
       filter(Field_Name == "PHWA_VULN_NDX_ER_2016") %>%
-      pull(Indicator_Name)
+      pull(Indicator_Name),
+    caption = c("Data from the EPA's 2017 Preliminary Healthy Watersheds Assessments and Orange County GIS.")
   ) +
   theme_void() +
   theme(
     legend.title     = element_blank(), 
     panel.grid.major = element_line(colour = NA),
+    plot.caption     = element_text(size = 8)
   )
 
-  
+ggsave(p, file = "ocWatersheds.pdf", width = 11, height = 8.5)  
 
 # ochucs %>%
 #   as_tibble %>%
