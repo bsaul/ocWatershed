@@ -33,9 +33,14 @@ city <- read_sp_data("data/city", "city")
 meta <- sf::st_read(dsn = fgdb, layer = "PHWA_Metadata")
 indices <- sf::st_read(dsn = fgdb, layer = "PHWA_Indices")
 hucs <- read_sp_data(.dsn = fgdb,  .layer = "NC_HUC12") %>%
-  select(HUC12 = HUC_12)
+  select(HUC12 = HUC_12) %>%
+  mutate(
+    HUC10 = substr(HUC12, 1, 10),
+    HUC4 = substr(HUC12, 1, 4)
+  )
 
-ochucs <- hucs[sf::st_intersects(hucs, county_boundary, sparse = FALSE), ] %>%
+ochucs <- 
+  hucs[sf::st_intersects(hucs, county_boundary, sparse = FALSE), ] %>%
   # Add back indices information
   left_join(indices, by = "HUC12")
 
@@ -48,6 +53,18 @@ ocintersect <- ochucs %>%
   # Add indices information
   left_join(indices, by = "HUC12")
 
+# Subregion (HUC4) boundaries
+subregions <-
+  ochucs %>%
+  select(HUC4, Shape) %>%
+  group_by(HUC4) %>%
+  summarise(
+    geometry = st_union(Shape)
+  ) %>%
+  mutate(
+    geometry = st_cast(geometry, "LINESTRING"),
+  ) %>%
+  st_intersection(st_union(ocintersect))
 
 ## Create map of health index ####
 
@@ -143,6 +160,12 @@ ochucs %>%
     data = filter(streams, NAMED == "yes"),
     size = 0.15,
     color = "#3182bd"
+  ) + 
+  geom_sf(
+    data  = subregions,
+    size  = .25,
+    color = "grey10",
+    fill  = NA
   ) + 
   # geom_sf_text(aes(label = HUC_12), size = 2) +
   # scale_fill_brewer(type = "seq", palette = "YlGnBu") +
