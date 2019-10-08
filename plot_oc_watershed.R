@@ -66,139 +66,147 @@ subregions <-
   ) %>%
   st_intersection(st_union(ocintersect))
 
-## Create map of health index ####
+## Create map of PLOT_VAR index ####
 
-PLOT_VAR <- "PHWA_HEALTH_NDX_ST_2016"
-
-hold1 <- 
-  indices %>%
-  as_tibble() %>%
-  select(NAME_HUC12, HUC12, !! rlang::sym(PLOT_VAR) )
-
-
-
-GRADIENT_BREAKS  <- 
- hold1 %>%
-  mutate(
-    in_orange = HUC12 %in% ochucs$HUC12
-  ) %>%
-  group_by(in_orange) %>%
-  summarise_at(
-    .vars = vars(one_of(PLOT_VAR)),
-    .funs = list(val = ~ list(quantile(., probs = c(0, .5, 1), type = 1)))
-  ) %>%
-  tidyr::unnest(cols = val) %>%
-  left_join(hold1, by = c("val" = PLOT_VAR)) %>%
-  filter(
-    in_orange | val == min(val) | val == max(val)
-  ) %>%
-  group_by(in_orange) %>%
-  tidyr::nest() %>%
-  mutate(
-    data = purrr::map2(
-      .x = in_orange,
-      .y = data,
-      .f = ~ {
-        pattern <- if (in_orange) {
-          "%.2f - %s healthy in county (%s)" 
-        } else {
-          "%.2f - %s healthy in NC"    
+plot_watershed <- function(PLOT_VAR, INDEX_TERM, TITLE){
+  
+  hold1 <- 
+    indices %>%
+    as_tibble() %>%
+    select(NAME_HUC12, HUC12, !! rlang::sym(PLOT_VAR) )
+  
+  GRADIENT_BREAKS  <- 
+    hold1 %>%
+    mutate(
+      in_orange = HUC12 %in% ochucs$HUC12
+    ) %>%
+    group_by(in_orange) %>%
+    summarise_at(
+      .vars = vars(one_of(PLOT_VAR)),
+      .funs = list(val = ~ list(quantile(., probs = c(0, .5, 1), type = 1)))
+    ) %>%
+    tidyr::unnest(cols = val) %>%
+    left_join(hold1, by = c("val" = PLOT_VAR)) %>%
+    filter(
+      in_orange | val == min(val) | val == max(val)
+    ) %>%
+    group_by(in_orange) %>%
+    tidyr::nest() %>%
+    mutate(
+      data = purrr::map2(
+        .x = in_orange,
+        .y = data,
+        .f = ~ {
+          pattern <- if (in_orange) {
+            paste0("%.2f - %s ", INDEX_TERM, " in county (%s)")
+          } else {
+            paste0("%.2f - %s ", INDEX_TERM, " in NC")  
+          }
+          .y %>% 
+            mutate(
+              label = case_when(
+                val == min(val) ~ sprintf(pattern, val, "Least", NAME_HUC12),
+                val == max(val) ~ sprintf(pattern, val, "Most", NAME_HUC12),
+                TRUE ~ sprintf("%.2f - Median index in county", val)
+              )
+            )
         }
-        .y %>% 
-        mutate(
-          label = case_when(
-            val == min(val) ~ sprintf(pattern, val, "Least", NAME_HUC12),
-            val == max(val) ~ sprintf(pattern, val, "Most", NAME_HUC12),
-            TRUE ~ sprintf("%.2f - Median index in county", val)
-          )
-        )
-      }
         
-    )
-  ) %>%
-  tidyr::unnest(cols = data)
+      )
+    ) %>%
+    tidyr::unnest(cols = data)
+ 
+  ochucs %>%
+    mutate(
+      geometry = st_cast(Shape, "POLYGON"),
+      highlight = case_when(
+        !! rlang::sym(PLOT_VAR) == min(!! rlang::sym(PLOT_VAR)) ~ "least",
+        !! rlang::sym(PLOT_VAR) == max(!! rlang::sym(PLOT_VAR)) ~ "most",
+        TRUE ~ "etc"
+      )
+    ) %>%
+    
+    # Start plotting
+    ggplot() +
+    geom_sf(size = .1, fill = "white") +
+    
+    # Add the PLOT_VAR information
+    geom_sf(
+      aes(fill = !! rlang::sym(PLOT_VAR),
+          color = highlight, 
+          size  = highlight),
+      alpha = 1
+    ) +
+    
+    # Add county boundary
+    geom_sf(
+      data = county_boundary,
+      color = "black",
+      fill = NA,
+      size = .25
+    ) + 
+    
+    # Shade urban areas
+    geom_sf(
+      data = city,
+      color = NA,
+      # color = "#fdae6b",
+      size  = 0.05,
+      fill = "grey50",
+      alpha = 0.55
+    ) + 
+    geom_sf(
+      data = filter(streams, NAMED == "yes"),
+      size = 0.15,
+      color = "#3182bd"
+    ) + 
 
-p <-
-ochucs %>%
-  mutate(
-    geometry = st_cast(Shape, "POLYGON"),
-    highlight = case_when(
-      !! rlang::sym(PLOT_VAR) == min(!! rlang::sym(PLOT_VAR)) ~ "least",
-      !! rlang::sym(PLOT_VAR) == max(!! rlang::sym(PLOT_VAR)) ~ "most",
-      TRUE ~ "etc"
+    geom_sf(
+      data  = subregions,
+      size  = .25,
+      color = "grey10",
+      fill  = NA
+    ) + 
+    
+    scale_fill_gradient2(
+      breaks = GRADIENT_BREAKS$val,
+      limits = c(0, 1),
+      labels = GRADIENT_BREAKS$label,
+      low = "#edf8b1", mid = "#7fcdbb", high = "#2c7fb8",
+      midpoint = .5) +
+    scale_color_manual( 
+      values = c("least" = "#7b3294", "etc" = "grey50", "most" = "#008837")
+    ) +
+    scale_size_manual(
+      values = c("least" = 0.45, "etc" = 0.1, "most" = 0.45)
+    ) + 
+    guides(size = FALSE, colour = FALSE) + 
+    labs(
+      title = TITLE,
+      subtitle = meta %>%
+        filter(Field_Name == PLOT_VAR) %>%
+        pull(Indicator_Name),
+      caption = paste("Data from the EPA's 2017 Preliminary Healthy Watersheds Assessments and Orange County GIS.",
+                      "Grey shading indicates incorporated areas.", sep = "\n")
+    ) +
+    theme_void() +
+    theme(
+      legend.title     = element_blank(), 
+      legend.position  = "right", 
+      panel.grid.major = element_line(colour = NA),
+      plot.caption     = element_text(size = 8, hjust = 0)
     )
-  ) %>%
-  ggplot() +
-  geom_sf(size = .1, fill = "white") +
-  geom_sf(
-    aes(fill = !! rlang::sym(PLOT_VAR),
-        color = highlight, 
-        size  = highlight),
-    alpha = 1
-  ) +
-  geom_sf(
-    data = county_boundary,
-    color = "black",
-    fill = NA,
-    size = .25
-  ) + 
-  # geom_sf(
-  #   data = ocintersect,
-  #   aes(fill = !! rlang::sym(PLOT_VAR)),
-  #   color = NA,
-  #   size = .1
-  # ) + 
-  geom_sf(
-    data = city,
-    color = NA,
-    # color = "#fdae6b",
-    size  = 0.05,
-    fill = "grey50",
-    alpha = 0.35
-  ) + 
-  geom_sf(
-    data = filter(streams, NAMED == "yes"),
-    size = 0.15,
-    color = "#3182bd"
-  ) + 
-  geom_sf(
-    data  = subregions,
-    size  = .25,
-    color = "grey10",
-    fill  = NA
-  ) + 
-  # geom_sf_text(aes(label = HUC_12), size = 2) +
-  # scale_fill_brewer(type = "seq", palette = "YlGnBu") +
-  scale_fill_gradient2(
-    breaks = GRADIENT_BREAKS$val,
-    limits = c(0, 1),
-    labels = GRADIENT_BREAKS$label,
-    low = "#edf8b1", mid = "#7fcdbb", high = "#2c7fb8",
-    midpoint = .5) +
-  scale_color_manual( 
-    values = c("least" = "#7b3294", "etc" = "grey50", "most" = "#008837")
-  ) +
-  scale_size_manual(
-    values = c("least" = 0.45, "etc" = 0.1, "most" = 0.45)
-  ) + 
-  guides(size = FALSE, colour = FALSE) + 
-  labs(
-    title = "Watershed Health in Orange County",
-    subtitle = meta %>%
-      filter(Field_Name == PLOT_VAR) %>%
-      pull(Indicator_Name),
-    caption = paste("Data from the EPA's 2017 Preliminary Healthy Watersheds Assessments and Orange County GIS.",
-                    "Grey shading indicates incorporated areas.", sep = "\n")
-  ) +
-  theme_void() +
-  theme(
-    legend.title     = element_blank(), 
-    legend.position  = "right", 
-    panel.grid.major = element_line(colour = NA),
-    plot.caption     = element_text(size = 8, hjust = 0)
-  )
+}
 
-ggsave(p, file = "ocWatershedsMap.pdf", width = 11, height = 8.5)  
+plot_watershed("PHWA_HEALTH_NDX_ST_2016", "healthy", 
+               "Watershed Health in Orange County") %>%
+  ggsave(file = "ocWatershedsMap_HEALTH.pdf", width = 11, height = 8.5)  
+
+plot_watershed("PHWA_VULN_NDX_ST_2016", "vulnerable", 
+               "Watershed Vulnerability in Orange County") %>%
+  ggsave(file = "ocWatershedsMap_VULN.pdf", width = 11, height = 8.5)  
+
+
 
 
 ## Scatterplot ####
